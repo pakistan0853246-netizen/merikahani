@@ -1,124 +1,134 @@
 import streamlit as st
-import requests, io, base64
+import requests
+import urllib.parse
 from PIL import Image
+from io import BytesIO
+import time
 from gtts import gTTS
-from fpdf import FPDF
-import re
+import tempfile
+import os
 
-# --- PAGE DESIGN ---
-st.set_page_config(page_title="Meri Kahani - Pro", page_icon="📚", layout="wide")
-st.markdown("""
-<style>
-.stApp { background: linear-gradient(135deg, #FFF8E7 0%, #FFECD2 100%); }
-.main-title { text-align:center; font-size: 45px; font-weight: bold; color: #4A2C0A; }
-.card { background: white; padding: 25px; border-radius: 20px; box-shadow: 0 8px 25px rgba(0,0,0,0.1); }
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown('<p class="main-title">📚 میری کہانی - PRO</p>', unsafe_allow_html=True)
-
-# --- SIDEBAR - CHARACTER LOCK ---
-with st.sidebar:
-    st.header("👤 ہمارا کریکٹر لاک کریں")
-    char_name = st.text_input("کریکٹر کا نام", "علی")
-    char_look = st.text_area("کریکٹر کی شکل", "10 سال کا پاکستانی بچہ، سفید شلوار قمیض، بڑی آنکھیں، پیارا مسکراتا چہرہ")
-    char_style = st.selectbox("گرافک سٹائل", ["Pixar 3D Cartoon, ultra detailed", "Disney Style, vibrant", "Anime Style, high quality", "Realistic Photo, 8k"])
-    api_key = st.text_input("Stability API Key", type="password", help="stability.ai سے فری Key لے لیں")
-    st.info("کریکٹر ایک ہی رہے گا، یہی تو مزہ ہے باس!")
-
-# --- MAIN AREA ---
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    story_input = st.text_area("اپنی پوری کہانی لکھیں باس (4-5 جملے)", "علی صبح سویرے جنگل میں گیا۔ وہاں اسے ایک جادوئی شیر ملا۔ شیر اور علی دوست بن گئے۔ دونوں نے مل کر خزانہ ڈھونڈا۔", height=150)
-    generate_btn = st.button("✨ جادوئی کتاب بنائیں", use_container_width=True, type="primary")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# --- FUNCTIONS ---
-def split_scenes(story):
-    scenes = re.split(r'[۔.!?\n]', story)
-    return [s.strip() for s in scenes if len(s.strip()) > 10][:5]
-
-def generate_image(prompt, key):
-    if not key: return None
-    url = "https://api.stability.ai/v1/generation/stable-diffusion-xl-1024-v1-0/text-to-image"
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-    # Character Lock Prompt
-    full_prompt = f"{char_look}, character named {char_name}, {prompt}, {char_style}, consistent character, same face, highly detailed, beautiful background"
-    payload = {"text_prompts": [{"text": full_prompt}], "cfg_scale": 8, "width": 1024, "height": 1024, "steps": 30}
+# --- FREE IMAGE FUNCTION ---
+def generate_free_image(prompt, seed=42):
+    # Pollinations - No API Key needed
+    safe_prompt = urllib.parse.quote(prompt)
+    url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&model=flux&seed={seed}&nologo=true"
     try:
-        res = requests.post(url, headers=headers, json=payload)
-        if res.status_code == 200:
-            img_data = base64.b64decode(res.json()["artifacts"][0]["base64"])
-            return Image.open(io.BytesIO(img_data))
-        else:
-            st.error(f"API Error: {res.text}")
-            return None
+        response = requests.get(url, timeout=60)
+        if response.status_code == 200:
+            return Image.open(BytesIO(response.content))
     except Exception as e:
-        st.error(str(e))
-        return None
+        st.error(f"Image Error: {e}")
+    return None
 
-def make_pdf(images, story_text):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=16)
-    pdf.multi_cell(0, 10, story_text.encode('latin-1', 'ignore').decode('latin-1'))
-    for img in images:
-        if img:
-            temp_path = "/tmp/temp_img.png"
-            img.save(temp_path)
-            pdf.add_page()
-            pdf.image(temp_path, x=10, y=10, w=180)
-    return bytes(pdf.output())
+def split_story(story):
+    lines = [l.strip() for l in story.split('.') if l.strip()]
+    # 5 hisso me baant do
+    scenes = []
+    for i in range(5):
+        if i < len(lines):
+            scenes.append(lines[i])
+        else:
+            scenes.append(lines[-1] if lines else "jungle me khargosh")
+    return scenes[:5]
 
-# --- GENERATION LOGIC ---
-if generate_btn:
-    if not story_input:
-        st.warning("پہلے کہانی تو لکھیں باس!")
-    else:
-        scenes = split_scenes(story_input)
-        st.success(f"باس، آپ کی کہانی کے {len(scenes)} سین بن گئے، اب تصویریں بن رہی ہیں...")
-        
-        images = []
-        cols = st.columns(len(scenes))
-        for i, scene in enumerate(scenes):
-            with cols[i]:
-                st.write(f"**سین {i+1}:** {scene}")
-                with st.spinner("بن رہی ہے..."):
-                    img = generate_image(scene, api_key)
-                    if img:
-                        st.image(img, use_container_width=True)
-                        images.append(img)
-                    else:
-                        st.warning("API Key ڈالیں تو تصویر آئے گی، ابھی Demo دکھا رہا ہوں")
-                        # Demo placeholder
-                        st.image("https://via.placeholder.com/400x400.png?text="+scene[:20], use_container_width=True)
-        
-        # --- VOICE FEATURE ---
-        st.divider()
-        st.subheader("🔊 کہانی سنیں")
-        try:
-            tts = gTTS(text=story_input, lang='ur', slow=False)
-            tts.save("/tmp/story.mp3")
-            st.audio("/tmp/story.mp3")
-        except:
-            tts = gTTS(text=story_input, lang='en')
-            tts.save("/tmp/story.mp3")
-            st.audio("/tmp/story.mp3")
+st.set_page_config(page_title="Meri Kahani - VIDEO PRO", page_icon="🎬", layout="wide")
+st.title("🎬 میری کہانی - Video Pro (FREE)")
 
-        # --- PDF DOWNLOAD ---
-        if images:
-            st.divider()
-            pdf_bytes = make_pdf(images, story_input)
-            st.download_button("📕 پوری کتاب PDF میں ڈاؤن لوڈ کریں", data=pdf_bytes, file_name=f"{char_name}_ki_kahani.pdf", mime="application/pdf", use_container_width=True)
+# --- SIDEBAR ---
+with st.sidebar:
+    st.header("ہمارا کریکٹر لاک کریں")
+    char_name = st.text_input("کریکٹر کا نام", "علی")
+    char_look = st.text_area("کریکٹر کی شکل", "10 year old Pakistani boy with pent shirt, cute face, big eyes", height=100)
+    style = st.selectbox("گرافک اسٹائل", ["3D Cartoon, ultra detailed, Pixar style", "Realistic Photo, 8k", "Anime style", "Disney style"])
+    
+    st.divider()
+    st.header("📤 اپنی تصویریں ڈال کر ویڈیو بنائیں")
+    uploaded_files = st.file_uploader("Character ki 1-5 Pictures Upload karo", type=["jpg","png","jpeg"], accept_multiple_files=True)
+    if uploaded_files:
+        st.success(f"{len(uploaded_files)} Tasveerein Upload ho gayin!")
 
+st.subheader("کہانی لکھیں")
+story_input = st.text_area("5 scenes me kahani likhein (har jumla ek scene banega)", "ایک گاؤں میں علی نام کا ایک غریب لڑکا رہتا تھا۔ وہ محنت کا پھل ڈھونڈ رہا تھا۔ اس کے والد ایک کسان تھے اور بڑی مشکل سے گھر کا خرچ پورا کرتے تھے۔ علی بڑا ہو کر ایک کامیاب انسان بننا چاہتا تھا لیکن اس کے پاس کتابیں خریدنے کے لیے پیسے بھی نہیں تھے۔ علی نے ہمت نہیں ہاری۔", height=150)
+
+col1, col2 = st.columns([1,1])
+with col1:
+    gen_btn = st.button("🎨 پہلے تصویریں بنائیں (FREE)", type="primary", use_container_width=True)
 with col2:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("✨ نئے فیچرز")
-    st.write("✅ **کریکٹر لاک:** ہر تصویر میں آپ کا علی ایک جیسا رہے گا")
-    st.write("✅ **HD گرافک:** Pixar 3D والا گرافک")
-    st.write("✅ **آٹو سین:** ایک کہانی سے 5 تصویریں خود بن جائیں گی")
-    st.write("✅ **آواز:** کہانی کو سنا بھی جا سکتا ہے")
-    st.write("✅ **PDF بک:** پوری کتاب ڈاؤن لوڈ")
-    st.markdown('</div>', unsafe_allow_html=True)
+    video_btn = st.button("🎬 اب ویڈیو بنائیں", use_container_width=True)
+
+if 'images' not in st.session_state:
+    st.session_state.images = []
+
+# --- GENERATE IMAGES ---
+if gen_btn:
+    if uploaded_files:
+        # Agar user ne apni tasveerein di hain to wohi use karo
+        imgs = []
+        for f in uploaded_files:
+            imgs.append(Image.open(f))
+        st.session_state.images = imgs
+        st.success("Aap ki upload ki hui tasveeron se video banegi!")
+    else:
+        # Nahi to kahani se FREE tasveerein banao
+        scenes = split_story(story_input)
+        st.session_state.images = []
+        cols = st.columns(5)
+        for i, scene in enumerate(scenes):
+            full_prompt = f"{style}, {char_look}, character name {char_name}, scene: {scene}, same face, consistent character, highly detailed"
+            with st.spinner(f"Scene {i+1} ban raha hai..."):
+                img = generate_free_image(full_prompt, seed=42+i)
+                if img:
+                    st.session_state.images.append(img)
+                    cols[i].image(img, caption=f"Scene {i+1}: {scene[:30]}")
+                    time.sleep(1)
+        st.success("4K Images Ban Gayin! Ab Video ka button dabao")
+
+# --- SHOW IMAGES IF EXIST ---
+if st.session_state.images:
+    st.divider()
+    cols = st.columns(len(st.session_state.images))
+    for i, im in enumerate(st.session_state.images):
+        cols[i].image(im, caption=f"Scene {i+1}")
+
+# --- MAKE VIDEO ---
+if video_btn:
+    if not st.session_state.images:
+        st.warning("Pehle tasveerein banao ya upload karo bhas!")
+    else:
+        with st.spinner("Video ban rahi hai... 30 second lagega..."):
+            try:
+                # 1. Audio banao gTTS se
+                tts = gTTS(text=story_input, lang='ur', slow=False)
+                audio_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
+                tts.save(audio_path)
+                
+                # 2. Video banao imageio se (Streamlit Cloud me moviepy se behtar)
+                import imageio.v2 as imageio
+                video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+                
+                writer = imageio.get_writer(video_path, fps=1, macro_block_size=1) # 1 image = 1 sec, aap 0.5 bhi kar sakte ho
+                for im in st.session_state.images:
+                    # resize to 1024x1024
+                    im_resized = im.resize((1024,1024))
+                    # 3 second tak ek image dikhao (fps=1, so 3 frames)
+                    for _ in range(3):
+                        writer.append_data(imageio.core.util.Array(im_resized))
+                writer.close()
+                
+                st.success("Video Ready hai bhas!")
+                st.video(video_path)
+                
+                with open(video_path, 'rb') as f:
+                    st.download_button("📥 ویڈیو ڈاؤن لوڈ کریں", f, file_name="meri_kahani_video.mp4", mime="video/mp4")
+                
+                st.audio(audio_path)
+                with open(audio_path, 'rb') as f:
+                    st.download_button("🔊 آڈیو ڈاؤن لوڈ کریں", f, file_name="kahani.mp3")
+
+            except Exception as e:
+                st.error(f"Video Error: {e}")
+                st.info("Agar moviepy ka error aye to requirements.txt me ye 3 line add karo: \n gtts \n imageio \n imageio-ffmpeg")
+
+st.markdown("---")
+st.caption("Made with ❤️ - FREE Version - Ab koi API Key nahi chahiye!")
