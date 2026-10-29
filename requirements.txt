@@ -1,5 +1,7 @@
 streamlit
 requests
 Pillow
-gTTS
+gtts
+imageio
+imageio-ffmpeg
 fpdf2
