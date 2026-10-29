@@ -4,131 +4,134 @@ import urllib.parse
 from PIL import Image
 from io import BytesIO
 import time
-from gtts import gTTS
 import tempfile
-import os
+import numpy as np
+import imageio
+from gtts import gTTS
 
-# --- FREE IMAGE FUNCTION ---
+# --- FREE IMAGE GENERATION (No API Key) ---
 def generate_free_image(prompt, seed=42):
-    # Pollinations - No API Key needed
     safe_prompt = urllib.parse.quote(prompt)
-    url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&model=flux&seed={seed}&nologo=true"
+    url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&model=flux&seed={seed}&nologo=true&enhance=true"
     try:
-        response = requests.get(url, timeout=60)
-        if response.status_code == 200:
-            return Image.open(BytesIO(response.content))
+        r = requests.get(url, timeout=90)
+        if r.status_code == 200:
+            return Image.open(BytesIO(r.content))
     except Exception as e:
         st.error(f"Image Error: {e}")
     return None
 
+# --- MOTION EFFECT (Ken Burns Zoom) ---
+def create_motion_frames(pil_image, num_frames=45):
+    frames = []
+    pil_image = pil_image.resize((768, 768)).convert("RGB")
+    w, h = pil_image.size
+    for i in range(num_frames):
+        zoom = 1.0 + (i / num_frames) * 0.3
+        new_w, new_h = int(w / zoom), int(h / zoom)
+        left = (w - new_w) // 2 + int((i - num_frames/2) * 0.5)
+        top = (h - new_h) // 2
+        cropped = pil_image.crop((max(0,left), max(0,top), min(w, left+new_w), min(h, top+new_h)))
+        resized = cropped.resize((768, 768))
+        frames.append(np.array(resized))
+    return frames
+
 def split_story(story):
     lines = [l.strip() for l in story.split('.') if l.strip()]
-    # 5 hisso me baant do
-    scenes = []
-    for i in range(5):
-        if i < len(lines):
-            scenes.append(lines[i])
-        else:
-            scenes.append(lines[-1] if lines else "jungle me khargosh")
-    return scenes[:5]
+    return [l for l in lines if l][:15]
 
-st.set_page_config(page_title="Meri Kahani - VIDEO PRO", page_icon="🎬", layout="wide")
-st.title("🎬 میری کہانی - Video Pro (FREE)")
+st.set_page_config(page_title="My Story - VIDEO PRO MAX", page_icon="🎬", layout="wide")
+st.title("🎬 My Story - Video Pro MAX (FREE)")
 
-# --- SIDEBAR ---
 with st.sidebar:
-    st.header("ہمارا کریکٹر لاک کریں")
-    char_name = st.text_input("کریکٹر کا نام", "علی")
-    char_look = st.text_area("کریکٹر کی شکل", "10 year old Pakistani boy with pent shirt, cute face, big eyes", height=100)
-    style = st.selectbox("گرافک اسٹائل", ["3D Cartoon, ultra detailed, Pixar style", "Realistic Photo, 8k", "Anime style", "Disney style"])
+    st.header("Lock Your Character")
+    char_name = st.text_input("Character Name", "Ali")
+    char_look = st.text_area("Character Look (Prompt)", "10 year old Pakistani boy, full body, cute face, big eyes, pent shirt, shoes", height=120)
+    style = st.selectbox("Graphic Style", ["3D Cartoon, Pixar style, ultra detailed", "Realistic Photo, 8k", "Anime style", "Disney style", "Cinematic"])
     
     st.divider()
-    st.header("📤 اپنی تصویریں ڈال کر ویڈیو بنائیں")
-    uploaded_files = st.file_uploader("Character ki 1-5 Pictures Upload karo", type=["jpg","png","jpeg"], accept_multiple_files=True)
+    st.header("Upload Your Pictures for Video")
+    st.caption("Unlimited Upload - Add as many as you want")
+    uploaded_files = st.file_uploader("Upload Character Pictures", type=["jpg","png","jpeg","webp"], accept_multiple_files=True)
     if uploaded_files:
-        st.success(f"{len(uploaded_files)} Tasveerein Upload ho gayin!")
+        st.success(f"{len(uploaded_files)} Images Uploaded!")
 
-st.subheader("کہانی لکھیں")
-story_input = st.text_area("5 scenes me kahani likhein (har jumla ek scene banega)", "ایک گاؤں میں علی نام کا ایک غریب لڑکا رہتا تھا۔ وہ محنت کا پھل ڈھونڈ رہا تھا۔ اس کے والد ایک کسان تھے اور بڑی مشکل سے گھر کا خرچ پورا کرتے تھے۔ علی بڑا ہو کر ایک کامیاب انسان بننا چاہتا تھا لیکن اس کے پاس کتابیں خریدنے کے لیے پیسے بھی نہیں تھے۔ علی نے ہمت نہیں ہاری۔", height=150)
+    st.divider()
+    motion_on = st.checkbox("Enable Motion Effect (Zoom)", value=True)
+    motion_speed = st.slider("Motion Speed", 1, 5, 2)
+
+st.subheader("Write Your Story (Each sentence = 1 Scene)")
+story_input = st.text_area("Story", "A boy named Ali lived in a village. He was very hardworking. He worked in his fields. Finally his hard work paid off. Everyone in the village started respecting him.", height=150, label_visibility="collapsed")
 
 col1, col2 = st.columns([1,1])
 with col1:
-    gen_btn = st.button("🎨 پہلے تصویریں بنائیں (FREE)", type="primary", use_container_width=True)
+    gen_btn = st.button("🎨 Generate Images (FREE)", type="primary", use_container_width=True)
 with col2:
-    video_btn = st.button("🎬 اب ویڈیو بنائیں", use_container_width=True)
+    video_btn = st.button("🎬 Create Full Motion Video", use_container_width=True)
 
 if 'images' not in st.session_state:
     st.session_state.images = []
 
-# --- GENERATE IMAGES ---
 if gen_btn:
     if uploaded_files:
-        # Agar user ne apni tasveerein di hain to wohi use karo
-        imgs = []
-        for f in uploaded_files:
-            imgs.append(Image.open(f))
+        imgs = [Image.open(f).convert("RGB") for f in uploaded_files]
         st.session_state.images = imgs
-        st.success("Aap ki upload ki hui tasveeron se video banegi!")
+        st.success(f"Using {len(imgs)} of your uploaded images for video!")
     else:
-        # Nahi to kahani se FREE tasveerein banao
         scenes = split_story(story_input)
         st.session_state.images = []
-        cols = st.columns(5)
+        cols = st.columns(min(len(scenes), 5))
         for i, scene in enumerate(scenes):
-            full_prompt = f"{style}, {char_look}, character name {char_name}, scene: {scene}, same face, consistent character, highly detailed"
-            with st.spinner(f"Scene {i+1} ban raha hai..."):
-                img = generate_free_image(full_prompt, seed=42+i)
+            full_prompt = f"{style}, full body shot, {char_look}, character {char_name}, scene: {scene}, consistent face, same character, highly detailed, no crop"
+            with st.spinner(f"Generating Scene {i+1}..."):
+                img = generate_free_image(full_prompt, seed=100+i*7)
                 if img:
                     st.session_state.images.append(img)
-                    cols[i].image(img, caption=f"Scene {i+1}: {scene[:30]}")
-                    time.sleep(1)
-        st.success("4K Images Ban Gayin! Ab Video ka button dabao")
+                    if i < 5:
+                        cols[i % 5].image(img, caption=f"Scene {i+1}")
+                time.sleep(1)
+        st.success("All Images Ready!")
 
-# --- SHOW IMAGES IF EXIST ---
 if st.session_state.images:
     st.divider()
-    cols = st.columns(len(st.session_state.images))
+    st.write(f"Total {len(st.session_state.images)} images ready")
+    cols = st.columns(min(len(st.session_state.images), 6))
     for i, im in enumerate(st.session_state.images):
-        cols[i].image(im, caption=f"Scene {i+1}")
+        cols[i % 6].image(im, caption=f"{i+1}")
 
-# --- MAKE VIDEO ---
 if video_btn:
     if not st.session_state.images:
-        st.warning("Pehle tasveerein banao ya upload karo bhas!")
+        st.warning("Please generate or upload images first!")
     else:
-        with st.spinner("Video ban rahi hai... 30 second lagega..."):
+        with st.spinner("Creating Full Motion Video... Please wait 1 minute..."):
             try:
-                # 1. Audio banao gTTS se
-                tts = gTTS(text=story_input, lang='ur', slow=False)
+                tts = gTTS(text=story_input, lang='en', slow=False)
                 audio_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
                 tts.save(audio_path)
-                
-                # 2. Video banao imageio se (Streamlit Cloud me moviepy se behtar)
-                import imageio.v2 as imageio
+
                 video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-                
-                writer = imageio.get_writer(video_path, fps=1, macro_block_size=1) # 1 image = 1 sec, aap 0.5 bhi kar sakte ho
+                writer = imageio.get_writer(video_path, fps=15, macro_block_size=1, quality=8)
+                total_frames = 45 // motion_speed if motion_on else 15
+
                 for im in st.session_state.images:
-                    # resize to 1024x1024
-                    im_resized = im.resize((1024,1024))
-                    # 3 second tak ek image dikhao (fps=1, so 3 frames)
-                    for _ in range(3):
-                        writer.append_data(imageio.core.util.Array(im_resized))
+                    if motion_on:
+                        for frame in create_motion_frames(im, num_frames=total_frames):
+                            writer.append_data(frame)
+                    else:
+                        frame = np.array(im.resize((768, 768)).convert("RGB"))
+                        for _ in range(total_frames):
+                            writer.append_data(frame)
                 writer.close()
                 
-                st.success("Video Ready hai bhas!")
+                st.balloons()
+                st.success("Video is Ready!")
                 st.video(video_path)
                 
-                with open(video_path, 'rb') as f:
-                    st.download_button("📥 ویڈیو ڈاؤن لوڈ کریں", f, file_name="meri_kahani_video.mp4", mime="video/mp4")
-                
+                with open(video_path, 'rb') as vf:
+                    st.download_button("📥 Download Video (MP4)", vf, file_name="My_Story_Video.mp4", mime="video/mp4", use_container_width=True)
                 st.audio(audio_path)
-                with open(audio_path, 'rb') as f:
-                    st.download_button("🔊 آڈیو ڈاؤن لوڈ کریں", f, file_name="kahani.mp3")
 
             except Exception as e:
-                st.error(f"Video Error: {e}")
-                st.info("Agar moviepy ka error aye to requirements.txt me ye 3 line add karo: \n gtts \n imageio \n imageio-ffmpeg")
+                st.error(f"Error: {e}")
 
-st.markdown("---")
-st.caption("Made with ❤️ - FREE Version - Ab koi API Key nahi chahiye!")
+st.caption("FREE Version - Unlimited Upload + Motion Video - No API Key Needed!")
