@@ -5,5 +5,4 @@ gtts
 imageio
 imageio-ffmpeg
 numpy
-fpdf2
 moviepy
