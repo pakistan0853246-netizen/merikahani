@@ -70,7 +70,7 @@ def make_pdf(images, story_text):
             img.save(temp_path)
             pdf.add_page()
             pdf.image(temp_path, x=10, y=10, w=180)
-    return pdf.output(dest='S').encode('latin-1')
+    return bytes(pdf.output())
 
 # --- GENERATION LOGIC ---
 if generate_btn:
